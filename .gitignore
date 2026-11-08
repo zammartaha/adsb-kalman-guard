@@ -1,0 +1,10 @@
+build/
+**/build/
+compile_commands.json
+*.o
+*.out
+kalman_server
+.vscode/
+node_modules/
+dist/
+.env
