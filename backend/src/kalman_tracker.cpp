@@ -1,7 +1,7 @@
 #include <cmath>
 #include "kalman_tracker.hpp"
 
-Matrix6d	uncertainty_cov(bool has_velocity) {
+static Matrix6d	uncertainty_cov(bool has_velocity) {
 	Matrix6d P = Matrix6d::Identity() * init_pos_variance;
 	if (!has_velocity) {
 		P(3,3) = 1000.0 * init_pos_variance;
@@ -11,7 +11,7 @@ Matrix6d	uncertainty_cov(bool has_velocity) {
 	return P;
 }
 
-Matrix6d	state_transition(double dt) {
+static Matrix6d	state_transition(double dt) {
 	Matrix6d F = Matrix6d::Identity();
 	F(0, 3) = dt;
 	F(1, 4) = dt;
@@ -19,7 +19,7 @@ Matrix6d	state_transition(double dt) {
 	return F;
 }
 
-Matrix6d	process_noise(double dt) {
+static Matrix6d	process_noise(double dt) {
 	double pos_var = 0.5 * dt * dt * acc_variance;
 	double vel_var = dt * acc_variance;
 
@@ -33,7 +33,7 @@ Matrix6d	process_noise(double dt) {
 	return Q;
 }
 
-Matrix6d	meas_noise(bool has_velocity) {
+static Matrix6d	meas_noise(bool has_velocity) {
 	Matrix6d R = Matrix6d::Zero();
 	R(0,0) = meas_pos_variance;
 	R(1,1) = meas_pos_variance;
@@ -51,7 +51,7 @@ Matrix6d	meas_noise(bool has_velocity) {
 	return R;
 }
 
-Vector6d	meas_vector(const enu_state& enu, const Vector6d& predicted_x) {
+static Vector6d	meas_vector(const enu_state& enu, const Vector6d& predicted_x) {
 	Vector6d z;
 	if (enu.has_velocity)
 		z << enu.x, enu.y, enu.z, enu.vx, enu.vy, enu.vz;

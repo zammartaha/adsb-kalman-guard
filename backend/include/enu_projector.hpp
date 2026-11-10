@@ -12,12 +12,13 @@ inline double get_env_double(const char* name, double default_val) {
 		}
 }
 
-inline const double REF_LAT		= get_env_double("REF_LAT", 0.0);
-inline const double REF_LON		= get_env_double("REF_LON", 0.0);
-inline const double REF_ALT_M	= get_env_double("REF_ALT_M", 0.0);
 constexpr double EARTH_RADIUS_M	= 6378137.0;
 constexpr double DEG_TO_RAD		= M_PI / 180.0;
 constexpr double RAD_TO_DEG		= 180.0 / M_PI;
+inline const double REF_LAT		= get_env_double("REF_LAT", 0.0);
+inline const double REF_LON		= get_env_double("REF_LON", 0.0);
+inline const double REF_ALT_M	= get_env_double("REF_ALT_M", 0.0);
+inline const double COS_REF_LAT	= std::cos(REF_LAT * DEG_TO_RAD);
 
 struct	enu_state
 {

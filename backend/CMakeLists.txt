@@ -36,5 +36,6 @@ add_executable(
 	src/parser.cpp
 	src/enu_projector.cpp
 	src/kalman_tracker.cpp
+	src/fleet_manager.cpp
 	)
 target_link_libraries(kalman_server PRIVATE nlohmann_json::nlohmann_json Eigen3::Eigen)
