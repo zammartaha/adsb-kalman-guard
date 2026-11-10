@@ -1,0 +1,53 @@
+services:
+  # 1. Optional Containerized readsb for RTL-SDR v4 (Start with: docker compose --profile sdr up)
+  readsb:
+    image: ghcr.io/sdr-enthusiasts/docker-adsb-ultrafeeder:latest
+    container_name: adsb-readsb
+    profiles: ["sdr"]
+    restart: unless-stopped
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    environment:
+      - READSB_DEVICE_TYPE=rtlsdr
+      - READSB_LAT=${REF_LAT:-0.0}
+      - READSB_LON=${REF_LON:-0.0}
+      - READSB_ALT=${REF_ALT_M:-0.0}m
+      - READSB_NET_ENABLE=true
+      - READSB_EXTRA_ARGS=--net-json-port=30047
+    ports:
+      - "30047:30047"
+
+  # 2. C++17 Kalman Engine + Node.js WebSocket Bridge
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: adsb-kalman-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - WS_PORT=8080
+      - STREAM_MODE=${STREAM_MODE:-replay}
+      - READSB_HOST=${READSB_HOST:-host.docker.internal}
+      - READSB_PORT=${READSB_PORT:-30047}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8080:8080"
+
+  # 3. React + Deck.gl 3D Radar Frontend
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        REF_LAT: ${REF_LAT:-0.0}
+        REF_LON: ${REF_LON:-0.0}
+        REF_ALT_M: ${REF_ALT_M:-0.0}
+    container_name: adsb-kalman-frontend
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend

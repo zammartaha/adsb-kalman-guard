@@ -96,13 +96,29 @@ function feedLineToKalman(rawLine) {
 
 // Feed Data into kalman server std::cin
 if (MODE === 'live') {
-	console.log(`[Bridge] Connecting to live readsb at ${READSB_HOST}:${READSB_PORT}...`);
-	const client = net.createConnection({ host: READSB_HOST, port: READSB_PORT }, () => {
-		console.log('[Bridge] Connected to readsb! Piping live ADS-B to C++ Kalman engine...');
-	});
-	const rlLive = readline.createInterface({ input: client });
-	rlLive.on('line', (line) => feedLineToKalman(line));
-	client.on('error', (err) => console.error('[Bridge] readsb TCP error:', err.message));
+	function connectToReadsb() {
+		console.log(`[Bridge] Connecting to live readsb at ${READSB_HOST}:${READSB_PORT}...`);
+		const client = new net.Socket();
+		let rlLive = null;
+
+		client.connect(READSB_PORT, READSB_HOST, () => {
+			console.log('[Bridge] Connected to readsb! Piping live ADS-B to C++ Kalman engine...');
+			rlLive = readline.createInterface({ input: client });
+			rlLive.on('line', (line) => feedLineToKalman(line));
+			rlLive.on('error', () => {}); // Prevent unhandled readline error crashes
+		});
+
+		client.on('error', (err) => {
+			console.error(`[Bridge] readsb TCP wait (${err.code || err.message}) - retrying in 2s...`);
+		});
+
+		client.on('close', () => {
+			if (rlLive) rlLive.close();
+			setTimeout(connectToReadsb, 2000);
+		});
+	}
+
+	connectToReadsb();
 } else {
 	console.log(`[Bridge] Starting real-time timestamp-synced replay of ${SAMPLE_FILE}...`);
 	const lines = fs.readFileSync(SAMPLE_FILE, 'utf-8').split('\n').filter(Boolean);

@@ -8,3 +8,5 @@ kalman_server
 node_modules/
 dist/
 .env
+.env.local
+!template.env

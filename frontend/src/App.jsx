@@ -4,7 +4,7 @@ import DeckGL from '@deck.gl/react';
 import { ScatterplotLayer, PathLayer, LineLayer, TextLayer, IconLayer, BitmapLayer } from '@deck.gl/layers';
 import { TileLayer } from '@deck.gl/geo-layers';
 
-const WS_URL = 'ws://localhost:8080';
+const WS_URL = import.meta.env.VITE_WS_URL || `ws://${window.location.hostname}:8080`;
 
 // Reference antenna origin loaded from the root .env file
 const ANTENNA_ORIGIN = {
@@ -267,9 +267,8 @@ export default function App() {
 
   return (
     <div style={{
-      width: '100vw',
-      height: '100vh',
-      position: 'relative',
+      position: 'fixed',
+      inset: 0,
       overflow: 'hidden',
       background: isDarkMode ? '#0b0f19' : '#e5e3df',
       fontFamily: 'system-ui, sans-serif'
