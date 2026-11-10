@@ -14,11 +14,41 @@ const sampleRelPath = process.env.SAMPLE_PATH || 'sample_data/brussels_live.ndjs
 const SAMPLE_FILE = path.resolve(__dirname, '..', sampleRelPath);
 const KALMAN_BIN = path.resolve(__dirname, '../build/kalman_server');
 
+let spoofTarget = process.env.SPOOF_HEX || 'NONE';
+const pingCounts = new Map();
+
 const wss = new WebSocketServer({ port: WS_PORT });
 console.log(`[Bridge] WebSocket server listening on ws://localhost:${WS_PORT}`);
 
+function broadcastSpoofConfig() {
+	const msg = JSON.stringify({ type: 'SPOOF_CONFIG', target: spoofTarget });
+	for (const client of wss.clients) {
+		if (client.readyState === 1) client.send(msg);
+	}
+}
+
+wss.on('connection', (ws) => {
+	// Send current spoof target to newly connected browser
+	ws.send(JSON.stringify({ type: 'SPOOF_CONFIG', target: spoofTarget }));
+
+	ws.on('message', (rawMsg) => {
+		try {
+			const cmd = JSON.parse(rawMsg.toString());
+			if (cmd.type === 'SET_SPOOF') {
+				spoofTarget = (cmd.target || 'NONE').trim().toLowerCase();
+				if (spoofTarget === 'none' || spoofTarget === '') spoofTarget = 'NONE';
+				if (spoofTarget === 'any' || spoofTarget === 'all') spoofTarget = 'ANY';
+				console.log(`\n[Bridge 🎯] Spoof target updated via UI -> ${spoofTarget}\n`);
+				broadcastSpoofConfig();
+			}
+		} catch (err) {
+			console.error('[Bridge] Invalid WS command:', err.message);
+		}
+	});
+});
+
 const kalmanProc = spawn(KALMAN_BIN, [], {
-	env: { ...process.env }
+	env: { ...process.env, SPOOF_HEX: 'NONE' }
 });
 
 // Forward server stderr to the terminal
@@ -36,13 +66,42 @@ rlOut.on('line', (jsonLine) => {
 	}
 });
 
+// Intercepts a raw readsb JSON line and injects a ~5km GPS jump if targeted
+function feedLineToKalman(rawLine) {
+	if (!rawLine || !rawLine.trim()) return;
+	try {
+		const obj = JSON.parse(rawLine);
+		if (obj.hex && typeof obj.lat === 'number' && typeof obj.lon === 'number') {
+			const hex = obj.hex.toLowerCase();
+			const count = (pingCounts.get(hex) || 0) + 1;
+			pingCounts.set(hex, count);
+
+			const isTargeted =
+				spoofTarget === 'ANY' ||
+				(spoofTarget !== 'NONE' && hex === spoofTarget.toLowerCase());
+
+			// Only spoof after the tracker has initialized (>= 3 pings)
+			if (isTargeted && count >= 3) {
+				obj.lat -= 0.045; // ~5000m South
+				obj.lon += 0.070; // ~5000m East
+				kalmanProc.stdin.write(JSON.stringify(obj) + '\n');
+				return;
+			}
+		}
+	} catch (e) {
+		// If line isn't valid JSON, pass through as-is
+	}
+	kalmanProc.stdin.write(rawLine + '\n');
+}
+
 // Feed Data into kalman server std::cin
 if (MODE === 'live') {
 	console.log(`[Bridge] Connecting to live readsb at ${READSB_HOST}:${READSB_PORT}...`);
 	const client = net.createConnection({ host: READSB_HOST, port: READSB_PORT }, () => {
 		console.log('[Bridge] Connected to readsb! Piping live ADS-B to C++ Kalman engine...');
 	});
-	client.pipe(kalmanProc.stdin);
+	const rlLive = readline.createInterface({ input: client });
+	rlLive.on('line', (line) => feedLineToKalman(line));
 	client.on('error', (err) => console.error('[Bridge] readsb TCP error:', err.message));
 } else {
 	console.log(`[Bridge] Starting real-time timestamp-synced replay of ${SAMPLE_FILE}...`);
@@ -52,11 +111,11 @@ if (MODE === 'live') {
 	function sendNextPing() {
 		if (idx >= lines.length) {
 			console.log('[Bridge] Reached end of sample file.');
-			return; // Stops cleanly at the end of the file!
+			return;
 		}
 
 		const currentLine = lines[idx];
-		kalmanProc.stdin.write(currentLine + '\n');
+		feedLineToKalman(currentLine);
 		idx++;
 
 		if (idx < lines.length) {

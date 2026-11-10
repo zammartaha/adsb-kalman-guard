@@ -21,14 +21,6 @@ void	fleet_manager::prune_stale_trackers(double current_ping_time) {
 	}
 }
 
-void	fleet_manager::maybe_inject_spoof(const std::string& hex, int count, enu_state& enu) const {
-	if ((hex == spoof_target || spoof_target == "ANY") && count >= 3 && count <= 50) {
-				std::cerr << "\n[⚠️ INJECTING FAKE SPOOF ATTACK ON " << hex << " (+5000m East, -5000m North)]\n";
-				enu.x += 5000.0;
-				enu.y -= 5000.0;
-			}
-}
-
 void	fleet_manager::prepare_and_print(const aircraft_ping& ping, const enu_state& enu, const kalman_tracker& t, int count) const {
 	double filt_lat = 0.0, filt_lon = 0.0, filt_alt = 0.0;
 			enu_to_latlon(t.x(0), t.x(1), t.x(2), filt_lat, filt_lon, filt_alt);
@@ -83,7 +75,6 @@ void	fleet_manager::process_ping(const aircraft_ping& ping) {
 	int& count = ping_counts[ping.hex];
 	count++;
 	auto it = trackers.find(ping.hex);
-	maybe_inject_spoof(ping.hex, ping_counts[ping.hex], enu);
 	if (it == trackers.end()) {
 		it = trackers.emplace(ping.hex, kalman_tracker(ping, enu)).first; //this line is optemized by AI
 		count = 1;

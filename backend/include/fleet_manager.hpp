@@ -4,16 +4,10 @@
 #include <chrono>
 #include <string>
 
-inline std::string get_env_string(const char* name, const std::string& default_val) {
-	const char* val = std::getenv(name);
-	return (val != nullptr) ? std::string(val) : default_val;
-}
-
 struct	fleet_manager {
 	std::unordered_map<std::string, kalman_tracker>	trackers;
 	std::unordered_map<std::string, int>			ping_counts;
 	std::chrono::steady_clock::time_point			last_sweep_time;
-	const std::string spoof_target = get_env_string("SPOOF_HEX", "NONE");
 
 	fleet_manager();
 
