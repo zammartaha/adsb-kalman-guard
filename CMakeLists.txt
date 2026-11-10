@@ -28,14 +28,14 @@ set(EIGEN_BUILD_DOC OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(json Eigen)
 
-include_directories(include)
+include_directories(backend/include)
 
 add_executable(
 	kalman_server
-	src/main.cpp
-	src/parser.cpp
-	src/enu_projector.cpp
-	src/kalman_tracker.cpp
-	src/fleet_manager.cpp
+	backend/src/main.cpp
+	backend/src/parser.cpp
+	backend/src/enu_projector.cpp
+	backend/src/kalman_tracker.cpp
+	backend/src/fleet_manager.cpp
 	)
 target_link_libraries(kalman_server PRIVATE nlohmann_json::nlohmann_json Eigen3::Eigen)

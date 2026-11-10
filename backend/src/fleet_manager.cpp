@@ -59,6 +59,7 @@ void	fleet_manager::prepare_and_print(const aircraft_ping& ping, const enu_state
 			std::cerr << std::fixed << std::setprecision(2)
 					  << "[" << count << "] ICAO: " << ping.hex
 					  << " | Call: " << ping.callsign << "\n"
+					  << "    timestamp= " << ping.timestamp << "\n"
 					  << "    Raw      ENU Pos (m)  : East(x)=" << enu.x << ", North(y)=" << enu.y << ", Up(z)=" << enu.z << "\n"
 					  << "    Filtered ENU Pos (m)  : East(x)=" << t.x(0) << ", North(y)=" << t.x(1) << ", Up(z)=" << t.x(2) << "\n"
 					  << "    Raw      ENU Vel (m/s): vx=" << enu.vx << ", vy=" << enu.vy << ", vz=" << enu.vz << "\n"
