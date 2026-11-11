@@ -10,3 +10,4 @@ dist/
 .env
 .env.local
 !template.env
+docker-compose.override.yml
