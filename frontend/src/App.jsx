@@ -4,7 +4,11 @@ import DeckGL from '@deck.gl/react';
 import { ScatterplotLayer, PathLayer, LineLayer, TextLayer, IconLayer, BitmapLayer } from '@deck.gl/layers';
 import { TileLayer } from '@deck.gl/geo-layers';
 
-const WS_URL = import.meta.env.VITE_WS_URL || `ws://${window.location.hostname}:8080`;
+const WS_URL = import.meta.env.VITE_WS_URL || (
+  window.location.protocol === 'https:'
+    ? `wss://${window.location.host}/ws`
+    : `ws://${window.location.hostname}:8080`
+);
 
 // Reference antenna origin loaded from the root .env file
 const ANTENNA_ORIGIN = {

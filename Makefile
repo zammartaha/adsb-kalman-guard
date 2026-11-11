@@ -1,4 +1,4 @@
-.PHONY: all build replay live-host live-sdr down clean
+.PHONY: all build replay live-host live-sdr prod-sdr prod-replay logs down clean
 
 all: build
 
@@ -15,8 +15,14 @@ live-host:
 live-sdr:
 	STREAM_MODE=live READSB_HOST=readsb docker compose --profile sdr up --build
 
+prod-sdr:
+	STREAM_MODE=live READSB_HOST=readsb docker compose --profile sdr --profile prod up -d --build
+
+logs:
+	docker compose --profile sdr --profile prod logs -f --tail 50
+
 down:
-	docker compose --profile sdr down
+	docker compose --profile sdr --profile prod down
 
 clean:
 	rm -rf build

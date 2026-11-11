@@ -51,3 +51,15 @@ services:
       - "5173:80"
     depends_on:
       - backend
+
+  # 4. Cloudflare Tunnel (Zero Port-Forwarding Public Hosting)
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: adsb-cloudflared
+    profiles: ["prod"]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CF_TUNNEL_TOKEN:-}
+    depends_on:
+      - frontend
