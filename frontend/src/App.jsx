@@ -21,7 +21,6 @@ const INITIAL_VIEW_STATE = {
   bearing: 0
 };
 
-// Crisp top-down commercial jet SVG encoded as a Data URL (mask: true allows dynamic RGBA tinting!)
 const AIRPLANE_SVG = `data:image/svg+xml;utf8,${encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="64" height="64" fill="white">' +
   '<path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>' +
@@ -32,12 +31,16 @@ const ICON_MAPPING = {
   airplane: { x: 0, y: 0, width: 64, height: 64, anchorY: 32, mask: true }
 };
 
-// Compute compass rotation angle for Deck.gl IconLayer from Kalman ENU velocities (vx, vy)
 function getHeadingAngle(d) {
   if (typeof d.vx !== 'number' || typeof d.vy !== 'number') return 0;
   if (Math.abs(d.vx) < 0.1 && Math.abs(d.vy) < 0.1) return 0;
-  // atan2(vx, vy) gives CW angle from North; negate for Deck.gl CCW screen rotation
   return -(Math.atan2(d.vx, d.vy) * 180) / Math.PI;
+}
+
+function getCompassDegrees(d) {
+  if (typeof d.vx !== 'number' || typeof d.vy !== 'number') return 0;
+  const deg = (Math.atan2(d.vx, d.vy) * 180) / Math.PI;
+  return Math.round((deg + 360) % 360);
 }
 
 const renderBitmapTile = props => {
@@ -58,10 +61,14 @@ export default function App() {
   const [activeSpoofTarget, setActiveSpoofTarget] = useState('NONE');
   const [customHexInput, setCustomHexInput] = useState('');
 
+  // Click-to-Inspect & Camera Follow state
+  const [selectedHex, setSelectedHex] = useState(null);
+  const [followSelected, setFollowSelected] = useState(false);
+  const [viewState, setViewState] = useState(INITIAL_VIEW_STATE);
+
   const aircraftMapRef = useRef(new Map());
   const wsRef = useRef(null);
 
-  // Send a spoofing target command to bridge/server.js
   const sendSpoofCommand = (targetValue) => {
     if (wsRef.current && wsRef.current.readyState === 1) {
       wsRef.current.send(JSON.stringify({
@@ -79,21 +86,16 @@ export default function App() {
       ws = new WebSocket(WS_URL);
       wsRef.current = ws;
 
-      ws.onopen = () => {
-        setWsConnected(true);
-      };
+      ws.onopen = () => setWsConnected(true);
 
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
-
-          // Check if this message is a spoof configuration update from server.js
           if (msg.type === 'SPOOF_CONFIG') {
             setActiveSpoofTarget(msg.target);
             return;
           }
 
-          // Otherwise it is an aircraft Kalman telemetry packet
           const ping = msg;
           const map = aircraftMapRef.current;
           const prev = map.get(ping.hex);
@@ -103,12 +105,14 @@ export default function App() {
 
           const filteredPath = prev ? [...prev.filteredPath.slice(-200), filtCoord] : [filtCoord];
           const rawPath = prev ? [...prev.rawPath.slice(-200), rawCoord] : [rawCoord];
+          const d2History = prev ? [...prev.d2History.slice(-24), ping.mahalanobis_d2] : [ping.mahalanobis_d2];
 
           map.set(ping.hex, {
             ...ping,
             lastSeenMs: Date.now(),
             filteredPath,
-            rawPath
+            rawPath,
+            d2History
           });
         } catch (err) {
           console.error('Failed to parse WS message:', err);
@@ -142,6 +146,18 @@ export default function App() {
   }, []);
 
   const anomalousAircraft = aircraftList.filter(d => d.is_anomalous);
+  const selectedAircraft = selectedHex ? aircraftList.find(d => d.hex === selectedHex) : null;
+
+  // Lock camera onto selected aircraft when followSelected is active
+  useEffect(() => {
+    if (followSelected && selectedAircraft) {
+      setViewState(prev => ({
+        ...prev,
+        longitude: selectedAircraft.filtered_lon,
+        latitude: selectedAircraft.filtered_lat
+      }));
+    }
+  }, [followSelected, selectedAircraft]);
 
   const layers = [
     // 1A. Base Map Layer
@@ -182,19 +198,29 @@ export default function App() {
       data: aircraftList,
       getPosition: d => [d.filtered_lon, d.filtered_lat, d.filtered_alt_m],
       getRadius: d => d.uncertainty_m,
-      getFillColor: d => d.is_anomalous ? [255, 165, 0, 50] : [0, 255, 170, 35],
-      getLineColor: d => d.is_anomalous ? [255, 165, 0, 180] : [0, 255, 170, 120],
+      getFillColor: d => d.is_anomalous ? [255, 165, 0, 55] : [0, 255, 170, 35],
+      getLineColor: d => d.hex === selectedHex ? [56, 189, 248, 255] : (d.is_anomalous ? [255, 165, 0, 190] : [0, 255, 170, 120]),
       stroked: true,
-      lineWidthMinPixels: 1
+      lineWidthMinPixels: d => d.hex === selectedHex ? 2 : 1
     }),
 
-    // 4. Kalman Filtered 3D Flight Path
+    // 4A. Diverging Phantom Spoofed 3D Flight Path (Red Ribbon for Spoofed Aircraft!)
+    new PathLayer({
+      id: 'raw-spoof-trajectory-layer',
+      data: anomalousAircraft,
+      getPath: d => d.rawPath,
+      getColor: [255, 40, 60, 185],
+      getWidth: 3,
+      widthMinPixels: 2
+    }),
+
+    // 4B. Kalman Filtered 3D Flight Path (Smooth Dead-Reckoned Ribbon)
     new PathLayer({
       id: 'filtered-trajectory-layer',
       data: aircraftList,
       getPath: d => d.filteredPath,
-      getColor: d => d.is_anomalous ? [255, 200, 0, 230] : [0, 255, 170, 210],
-      getWidth: 4,
+      getColor: d => d.hex === selectedHex ? [56, 189, 248, 255] : (d.is_anomalous ? [255, 200, 0, 235] : [0, 255, 170, 210]),
+      getWidth: d => d.hex === selectedHex ? 6 : 4,
       widthMinPixels: 2
     }),
 
@@ -224,7 +250,7 @@ export default function App() {
       billboard: false
     }),
 
-    // 7. Kalman Filtered Real Aircraft Icon (Green when normal, Amber when coasting, Clickable to Spoof!)
+    // 7. Kalman Filtered Real Aircraft Icon
     new IconLayer({
       id: 'filtered-aircraft-icon',
       data: aircraftList,
@@ -233,13 +259,14 @@ export default function App() {
       getIcon: () => 'airplane',
       sizeScale: 1,
       getPosition: d => [d.filtered_lon, d.filtered_lat, d.filtered_alt_m],
-      getSize: 28,
+      getSize: d => d.hex === selectedHex ? 34 : 28,
       getAngle: d => getHeadingAngle(d),
-      getColor: d => d.is_anomalous ? [255, 180, 0, 255] : [0, 255, 170, 255],
+      getColor: d => d.hex === selectedHex ? [56, 189, 248, 255] : (d.is_anomalous ? [255, 180, 0, 255] : [0, 255, 170, 255]),
       billboard: false,
       pickable: true,
       onClick: ({ object }) => {
         if (object && object.hex) {
+          setSelectedHex(object.hex);
           setCustomHexInput(object.hex);
         }
       }
@@ -265,6 +292,14 @@ export default function App() {
   const panelText = isDarkMode ? '#f8fafc' : '#0f172a';
   const panelBorder = isDarkMode ? '1px solid #334155' : '1px solid #cbd5e1';
 
+  // Selected aircraft kinematics calculations
+  const groundSpeedMs = selectedAircraft ? Math.hypot(selectedAircraft.vx || 0, selectedAircraft.vy || 0) : 0;
+  const groundSpeedKnots = Math.round(groundSpeedMs * 1.94384);
+  const groundSpeedKmh = Math.round(groundSpeedMs * 3.6);
+  const climbRateMs = selectedAircraft && typeof selectedAircraft.vz === 'number' ? selectedAircraft.vz.toFixed(1) : '0.0';
+  const gateThreshold = 200.0;
+  const d2Pct = selectedAircraft ? Math.min(100, (selectedAircraft.mahalanobis_d2 / gateThreshold) * 100) : 0;
+
   return (
     <div style={{
       position: 'fixed',
@@ -274,7 +309,13 @@ export default function App() {
       fontFamily: 'system-ui, sans-serif'
     }}>
       <DeckGL
-        initialViewState={INITIAL_VIEW_STATE}
+        viewState={viewState}
+        onViewStateChange={({ viewState: newVs, interactionState }) => {
+          setViewState(newVs);
+          if (interactionState && interactionState.isDragging && followSelected) {
+            setFollowSelected(false);
+          }
+        }}
         controller={true}
         layers={layers}
         getTooltip={({ object }) => object && object.hex && (
@@ -283,7 +324,7 @@ export default function App() {
           `Uncertainty: ±${object.uncertainty_m.toFixed(1)}m\n` +
           `Mahalanobis d²: ${object.mahalanobis_d2.toFixed(1)}\n` +
           `Status: ${object.is_anomalous ? '🚨 ' + object.anomaly_reason : '✅ NORMAL'}\n` +
-          `(Click plane to copy ICAO hex to Spoof Control)`
+          `(Click plane to open Telemetry Inspector)`
         )}
       />
 
@@ -299,7 +340,7 @@ export default function App() {
         color: panelText,
         border: panelBorder,
         boxShadow: '0 4px 16px rgba(0,0,0,0.35)',
-        width: '290px'
+        width: '295px'
       }}>
         <div style={{ fontWeight: 'bold', fontSize: '16px', marginBottom: '8px' }}>
           🛡️ ADS-B Kalman Guard
@@ -323,7 +364,6 @@ export default function App() {
 
         <hr style={{ border: 'none', borderTop: panelBorder, margin: '10px 0' }} />
 
-        {/* Red-Team Spoofing Control Section */}
         <div style={{ fontWeight: 'bold', fontSize: '13px', marginBottom: '6px' }}>
           🎯 Red-Team Spoof Injector
         </div>
@@ -333,7 +373,6 @@ export default function App() {
           </b>
         </div>
 
-        {/* Quick Action Buttons: Spoof All vs Disable */}
         <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
           <button
             onClick={() => sendSpoofCommand('ANY')}
@@ -369,7 +408,6 @@ export default function App() {
           </button>
         </div>
 
-        {/* Specific Aircraft ICAO Hex Input + Dropdown */}
         <div style={{ fontSize: '12px', marginBottom: '4px', opacity: 0.85 }}>
           Or target specific ICAO Hex (click plane or select):
         </div>
@@ -406,14 +444,13 @@ export default function App() {
           </button>
         </div>
 
-        {/* Live Aircraft Quick-Select Dropdown */}
         {aircraftList.length > 0 && (
           <select
-            value=""
+            value={selectedHex || ''}
             onChange={(e) => {
               if (e.target.value) {
+                setSelectedHex(e.target.value);
                 setCustomHexInput(e.target.value);
-                sendSpoofCommand(e.target.value);
               }
             }}
             style={{
@@ -427,7 +464,7 @@ export default function App() {
               cursor: 'pointer'
             }}
           >
-            <option value="">-- Quick-select tracked aircraft --</option>
+            <option value="">-- Inspect / Select Aircraft --</option>
             {aircraftList.map(ac => (
               <option key={ac.hex} value={ac.hex}>
                 {ac.hex} ({ac.callsign && ac.callsign !== 'N/A' ? ac.callsign.trim() : 'No Callsign'})
@@ -436,6 +473,174 @@ export default function App() {
           </select>
         )}
       </div>
+
+      {/* Bottom-Right Click-to-Inspect Aircraft Telemetry Drawer */}
+      {selectedAircraft && (
+        <div style={{
+          position: 'absolute',
+          bottom: '20px',
+          right: '20px',
+          zIndex: 10,
+          padding: '16px 18px',
+          borderRadius: '12px',
+          background: panelBg,
+          color: panelText,
+          border: panelBorder,
+          boxShadow: '0 4px 20px rgba(0,0,0,0.45)',
+          width: '330px'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+            <div style={{ fontWeight: 'bold', fontSize: '15px' }}>
+              ✈️ {selectedAircraft.callsign && selectedAircraft.callsign !== 'N/A' ? selectedAircraft.callsign.trim() : selectedAircraft.hex}
+              <span style={{ fontSize: '12px', opacity: 0.7, marginLeft: '6px' }}>({selectedAircraft.hex})</span>
+            </div>
+            <button
+              onClick={() => { setSelectedHex(null); setFollowSelected(false); }}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: panelText,
+                cursor: 'pointer',
+                fontSize: '15px',
+                fontWeight: 'bold'
+              }}
+            >
+              ✕
+            </button>
+          </div>
+
+          {/* Status Badge */}
+          <div style={{
+            padding: '5px 8px',
+            borderRadius: '6px',
+            fontSize: '12px',
+            fontWeight: 'bold',
+            marginBottom: '10px',
+            background: selectedAircraft.is_anomalous ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.2)',
+            color: selectedAircraft.is_anomalous ? '#f87171' : '#34d399',
+            border: selectedAircraft.is_anomalous ? '1px solid #ef4444' : '1px solid #10b981'
+          }}>
+            {selectedAircraft.is_anomalous
+              ? `🚨 SPOOF REJECTED (${selectedAircraft.anomaly_reason})`
+              : '✅ KALMAN TRACK LOCKED (NORMAL)'}
+          </div>
+
+          {/* 6D State Vector Grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12px', marginBottom: '12px' }}>
+            <div>
+              <div style={{ opacity: 0.7 }}>Kalman Altitude</div>
+              <b>{Math.round(selectedAircraft.filtered_alt_m)} m</b>
+            </div>
+            <div>
+              <div style={{ opacity: 0.7 }}>Ground Speed</div>
+              <b>{groundSpeedKnots} kt ({groundSpeedKmh} km/h)</b>
+            </div>
+            <div>
+              <div style={{ opacity: 0.7 }}>Vertical Rate (vz)</div>
+              <b>{climbRateMs > 0 ? `+${climbRateMs}` : climbRateMs} m/s</b>
+            </div>
+            <div>
+              <div style={{ opacity: 0.7 }}>Heading / Uncertainty</div>
+              <b>{getCompassDegrees(selectedAircraft)}° / ±{selectedAircraft.uncertainty_m.toFixed(1)}m</b>
+            </div>
+          </div>
+
+          {/* Live Mahalanobis Innovation Gate Bar */}
+          <div style={{ fontSize: '12px', marginBottom: '4px', display: 'flex', justifyContent: 'space-between' }}>
+            <span>Mahalanobis Gate (d²):</span>
+            <b style={{ color: selectedAircraft.mahalanobis_d2 > gateThreshold ? '#ef4444' : '#38bdf8' }}>
+              {selectedAircraft.mahalanobis_d2.toFixed(2)} / {gateThreshold.toFixed(1)}
+            </b>
+          </div>
+          <div style={{
+            width: '100%',
+            height: '8px',
+            borderRadius: '4px',
+            background: isDarkMode ? '#1e293b' : '#e2e8f0',
+            overflow: 'hidden',
+            marginBottom: '10px'
+          }}>
+            <div style={{
+              width: `${d2Pct}%`,
+              height: '100%',
+              background: selectedAircraft.mahalanobis_d2 > gateThreshold ? '#ef4444' : '#38bdf8',
+              transition: 'width 0.15s ease-out'
+            }} />
+          </div>
+
+          {/* Mini Sparkline of Recent d² History */}
+          {selectedAircraft.d2History && (
+            <div style={{ marginBottom: '12px' }}>
+              <div style={{ fontSize: '11px', opacity: 0.7, marginBottom: '4px' }}>
+                Recent Innovation History (last {selectedAircraft.d2History.length} pings):
+              </div>
+              <div style={{
+                display: 'flex',
+                alignItems: 'flex-end',
+                gap: '3px',
+                height: '32px',
+                padding: '4px',
+                borderRadius: '6px',
+                background: isDarkMode ? '#0f172a' : '#f1f5f9'
+              }}>
+                {selectedAircraft.d2History.map((val, idx) => {
+                  const hPct = Math.max(8, Math.min(100, (val / gateThreshold) * 100));
+                  const isSpike = val > gateThreshold;
+                  return (
+                    <div
+                      key={idx}
+                      style={{
+                        flex: 1,
+                        height: `${hPct}%`,
+                        borderRadius: '2px',
+                        background: isSpike ? '#ef4444' : '#10b981'
+                      }}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Action Buttons: Camera Follow & Spoof Toggle */}
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              onClick={() => setFollowSelected(!followSelected)}
+              style={{
+                flex: 1,
+                padding: '7px 10px',
+                borderRadius: '6px',
+                border: 'none',
+                background: followSelected ? '#0284c7' : '#334155',
+                color: '#fff',
+                fontWeight: 'bold',
+                fontSize: '12px',
+                cursor: 'pointer'
+              }}
+            >
+              {followSelected ? '🎥 Following (Locked)' : '🎥 Follow Aircraft'}
+            </button>
+            <button
+              onClick={() => sendSpoofCommand(
+                activeSpoofTarget === selectedAircraft.hex ? 'NONE' : selectedAircraft.hex
+              )}
+              style={{
+                flex: 1,
+                padding: '7px 10px',
+                borderRadius: '6px',
+                border: 'none',
+                background: activeSpoofTarget === selectedAircraft.hex ? '#10b981' : '#f59e0b',
+                color: activeSpoofTarget === selectedAircraft.hex ? '#fff' : '#0f172a',
+                fontWeight: 'bold',
+                fontSize: '12px',
+                cursor: 'pointer'
+              }}
+            >
+              {activeSpoofTarget === selectedAircraft.hex ? '✅ Stop Spoof' : '🎯 Spoof This Plane'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Top-Right Theme Toggle Button */}
       <button

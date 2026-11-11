@@ -10,7 +10,7 @@ const double	acc_variance = 4.0;
 const double	meas_pos_variance = 900.0;
 const double	meas_vel_variance = 25.0;
 const double	missing_vel_variance = 1e6;
-const double	spoofing_threshold_d2 = 30.0;
+const double	spoofing_threshold_d2 = 200.0;
 const double	TRACK_TIMEOUT_SEC = 60.0;
 const double	SWEEP_INTERVAL_SEC = 10.0;
 
